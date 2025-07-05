@@ -1,4 +1,4 @@
-// File: api/index.js
+// File: api/index.js (Versi dengan Halaman Utama)
 
 const express = require('express');
 const cors = require('cors');
@@ -12,13 +12,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'kunci-rahasia-vercel-yang-aman-123';
 
+// Ganti placeholder dengan URL frontend Vercel Anda yang sebenarnya
 const allowedOrigins = [
-    'https://markisut-frontend.vercel.app', // URL frontend Vercel Anda
-    // Anda bisa menambahkan URL lain jika perlu
+    'https://markisut-frontend.vercel.app', 
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
+    // Izinkan request jika berasal dari daftar di atas, atau jika tidak ada origin (seperti dari Postman/Thunder Client)
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -31,15 +32,14 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// PENTING: Mengarahkan ke folder 'public' dan 'data' di lingkungan Vercel
+// Mengarahkan ke folder 'public' dan 'data' di lingkungan Vercel
 const publicPath = path.resolve(process.cwd(), 'public');
-app.use(express.static(publicPath));
-
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
-// ... (Sisa kode dari server.js Anda, SAMA PERSIS) ...
+// Middleware untuk menyajikan file statis dari folder public
+app.use(express.static(publicPath));
 
 // Inisialisasi Data
 async function initializeData() {
@@ -65,7 +65,7 @@ async function initializeData() {
     }
 }
 
-// Helper functions (readJSON, writeJSON)
+// Fungsi Bantuan untuk Baca/Tulis JSON
 async function readJSON(filePath) {
     try {
         const data = await fs.readFile(filePath, 'utf8');
@@ -87,7 +87,6 @@ async function writeJSON(filePath, data) {
     }
 }
 
-
 // Middleware untuk Autentikasi Token
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
@@ -101,7 +100,21 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// Rute-rute API (Login, Orders, Dashboard, dll.)
+// =================================================================
+// RUTE-RUTE APLIKASI
+// =================================================================
+
+// Rute untuk halaman utama
+app.get('/', (req, res) => {
+  res.send('<h1>Selamat Datang di Markisut Backend API</h1><p>Server berjalan dengan baik.</p>');
+});
+
+// Rute untuk health check
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Rute untuk login
 app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -119,6 +132,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Rute untuk membuat pesanan
 app.post('/api/orders', async (req, res) => {
     try {
         const orderData = req.body;
@@ -134,26 +148,15 @@ app.post('/api/orders', async (req, res) => {
     }
 });
 
-// ... (semua rute GET, PUT, DELETE lainnya bisa dimasukkan di sini) ...
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
+// ... (semua rute lain seperti GET /api/orders, GET /api/dashboard, dll bisa ditambahkan di sini dengan diawali 'authenticateToken') ...
+
+// Handler untuk halaman admin
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(publicPath, 'Admin-Panel.html'));
 });
 
-
-// Handler untuk semua rute lainnya, jika diperlukan
-app.use('/api', (req, res) => {
-    res.status(404).json({ error: 'Endpoint not found' });
-});
-
-// PENTING: Jalankan server hanya setelah data diinisialisasi
-initializeData().then(() => {
-    // Di lingkungan serverless, kita tidak perlu app.listen
-    // Vercel akan menangani ini.
-});
+// Jalankan server hanya setelah data diinisialisasi
+initializeData();
 
 // Ekspor aplikasi Express untuk Vercel
 module.exports = app;
