@@ -1,15 +1,25 @@
 {
   "version": 2,
+  "name": "markisut-backend",
   "builds": [
     {
-      "src": "./api/index.js",
+      "src": "index.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/api/index.js"
+      "dest": "index.js"
     }
-  ]
+  ],
+  "functions": {
+    "index.js": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "NODE_ENV": "production",
+    "JWT_SECRET": "markisut-super-secret-key-2024-production"
+  }
 }
