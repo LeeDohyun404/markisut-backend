@@ -39,7 +39,7 @@ app.use(express.urlencoded({ extended: true }));
 const publicPath = path.resolve(process.cwd(), 'public');
 app.use(express.static(publicPath));
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DATA_DIR = path.join('/tmp', 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
