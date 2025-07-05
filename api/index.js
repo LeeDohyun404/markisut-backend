@@ -1,4 +1,4 @@
-// File: api/index.js (Versi Final untuk Vercel)
+// Perbaikan konfigurasi CORS di index.js
 
 const express = require('express');
 const cors = require('cors');
@@ -7,36 +7,59 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
 const path = require('path');
 
-// Inisialisasi aplikasi Express
 const app = express();
 
-// Konfigurasi Kunci Rahasia dari Environment Variable
-// Pastikan Anda sudah mengatur ini di dashboard Vercel
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-fallback-secret-key';
 
-// Konfigurasi CORS
-// Hanya mengizinkan permintaan dari domain frontend Anda di Vercel
+// PERBAIKAN: Konfigurasi CORS yang lebih fleksibel
 const allowedOrigins = [
-    'https://markisut-frontend.vercel.app' // URL Frontend Vercel Anda
+    'https://markisut-frontend.vercel.app',
+    'https://markisut-frontend.vercel.app', // Ganti dengan domain frontend Anda yang sebenarnya
+    'http://localhost:3000', // Untuk development
+    'http://localhost:5000', // Untuk development
+    'https://localhost:3000', // Untuk development dengan HTTPS
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    console.log("REQUEST ORIGIN: ", origin); // <-- BARIS DEBUGGING
-    if (!origin || allowedOrigins.includes(origin)) {
+    console.log("REQUEST ORIGIN: ", origin);
+    
+    // Izinkan request tanpa origin (misalnya dari mobile app atau Postman)
+    if (!origin) return callback(null, true);
+    
+    // Izinkan jika origin ada dalam daftar yang diizinkan
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.log("CORS BLOCKED: Origin not allowed:", origin);
       callback(new Error('Akses ditolak oleh kebijakan CORS'));
     }
-  }
+  },
+  credentials: true, // Jika Anda menggunakan cookies
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 };
 
-// Penggunaan Middleware
+// ALTERNATIF: Jika masih bermasalah, gunakan CORS yang lebih permisif (hanya untuk testing)
+// const corsOptions = {
+//   origin: true, // Mengizinkan semua origin
+//   credentials: true,
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+// };
+
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Menentukan path absolut ke folder 'public' dan 'data'
+// Tambahkan middleware untuk logging requests
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log('Headers:', req.headers);
+    next();
+});
+
+// Sisa kode tetap sama...
 const publicPath = path.resolve(process.cwd(), 'public');
 app.use(express.static(publicPath));
 
@@ -44,7 +67,7 @@ const DATA_DIR = path.join('/tmp', 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
-// Inisialisasi Data
+// Fungsi inisialisasi dan helper functions tetap sama
 async function initializeData() {
     try {
         await fs.mkdir(DATA_DIR, { recursive: true });
@@ -56,7 +79,6 @@ async function initializeData() {
     } catch (error) { console.error('Error initializing data:', error); }
 }
 
-// Fungsi Bantuan Baca/Tulis JSON
 async function readJSON(filePath) {
     try { return JSON.parse(await fs.readFile(filePath, 'utf8')); } catch (error) { return []; }
 }
@@ -64,7 +86,6 @@ async function writeJSON(filePath, data) {
     try { await fs.writeFile(filePath, JSON.stringify(data, null, 2)); return true; } catch (error) { return false; }
 }
 
-// Middleware Autentikasi
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -76,19 +97,19 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// ================== RUTE-RUTE APLIKASI ==================
-
-// Rute utama
+// Routes
 app.get('/', (req, res) => {
-  res.send('<h1>Selamat Datang di Markisut Backend API</h1><p>Server berjalan dengan baik.</p>');
+    res.json({ 
+        message: 'Selamat Datang di Markisut Backend API',
+        status: 'Server berjalan dengan baik',
+        timestamp: new Date().toISOString()
+    });
 });
 
-// Rute health check
 app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Rute login
 app.post('/api/login', async (req, res) => {
     try {
         if (!JWT_SECRET) throw new Error('JWT_SECRET not configured on the server.');
@@ -107,29 +128,66 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// Rute membuat pesanan
+// PERBAIKAN: Endpoint orders dengan logging yang lebih baik
 app.post('/api/orders', async (req, res) => {
     try {
+        console.log('Received order data:', req.body);
+        
         const orderData = req.body;
+        if (!orderData || Object.keys(orderData).length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Order data is required' 
+            });
+        }
+
         const orders = await readJSON(ORDERS_FILE);
         const orderId = 'MKS' + Date.now().toString().slice(-8);
-        const newOrder = { id: orderId, ...orderData, createdAt: new Date().toISOString(), status: 'Pending', updatedAt: new Date().toISOString() };
+        const newOrder = { 
+            id: orderId, 
+            ...orderData, 
+            createdAt: new Date().toISOString(), 
+            status: 'Pending', 
+            updatedAt: new Date().toISOString() 
+        };
+        
         orders.push(newOrder);
-        await writeJSON(ORDERS_FILE, orders);
-        res.status(201).json({ success: true, message: 'Order received successfully', order: newOrder });
+        const writeSuccess = await writeJSON(ORDERS_FILE, orders);
+        
+        if (!writeSuccess) {
+            throw new Error('Failed to save order to file');
+        }
+
+        console.log('Order created successfully:', orderId);
+        res.status(201).json({ 
+            success: true, 
+            message: 'Order received successfully', 
+            order: newOrder 
+        });
     } catch (error) {
         console.error('Order creation error:', error);
-        res.status(500).json({ error: 'Failed to create order' });
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to create order: ' + error.message 
+        });
     }
 });
 
-// Handler untuk halaman admin
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(publicPath, 'Admin-Panel.html'));
 });
 
-// Jalankan inisialisasi data sebelum server siap
+// Error handling middleware
+app.use((error, req, res, next) => {
+    console.error('Unhandled error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+});
+
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+});
+
 initializeData();
 
-// Ekspor aplikasi Express untuk Vercel
 module.exports = app;
