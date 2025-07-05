@@ -22,6 +22,7 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
+    console.log("REQUEST ORIGIN: ", origin); // <-- BARIS DEBUGGING
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
