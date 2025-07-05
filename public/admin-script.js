@@ -1,377 +1,465 @@
-// server.js - Backend Server untuk Markisut E-Commerce
-const express = require('express');
-const cors = require('cors');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const fs = require('fs').promises;
-const path = require('path');
+// Fixed Admin Panel JavaScript
+const API_BASE_URL = 'https://markisut-backend.vercel.app';
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'markisut-secret-key-2024';
+// Authentication variables
+let authToken = localStorage.getItem('adminToken');
+let currentOrders = [];
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+// DOM Elements
+const loginForm = document.getElementById('loginForm');
+const dashboard = document.getElementById('dashboard');
+const loginFormElement = document.getElementById('loginFormElement');
+const logoutBtn = document.getElementById('logoutBtn');
 
-// Data storage (untuk demo, gunakan file JSON)
-const DATA_DIR = './data';
-const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, checking auth status...');
+    checkAuthStatus();
+    initEventListeners();
+});
 
-// Inisialisasi data
-async function initializeData() {
-    try {
-        await fs.mkdir(DATA_DIR, { recursive: true });
-        
-        // Buat file orders jika belum ada
-        try {
-            await fs.access(ORDERS_FILE);
-        } catch {
-            await fs.writeFile(ORDERS_FILE, JSON.stringify([]));
-        }
-        
-        // Buat file users dengan admin default
-        try {
-            await fs.access(USERS_FILE);
-        } catch {
-            const defaultAdmin = {
-                username: 'admin',
-                password: await bcrypt.hash('admin123', 10),
-                role: 'admin'
-            };
-            await fs.writeFile(USERS_FILE, JSON.stringify([defaultAdmin]));
-        }
-        
-        console.log('Data initialized successfully');
-    } catch (error) {
-        console.error('Error initializing data:', error);
+function checkAuthStatus() {
+    console.log('Current token:', authToken);
+    if (authToken) {
+        console.log('Token found, showing dashboard...');
+        showDashboard();
+        loadOrdersData();
+    } else {
+        console.log('No token found, showing login form...');
+        showLoginForm();
     }
 }
 
-// Helper functions
-async function readJSON(filePath) {
-    try {
-        const data = await fs.readFile(filePath, 'utf8');
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('Error reading file:', error);
-        return [];
-    }
+function showLoginForm() {
+    console.log('Showing login form');
+    if (loginForm) loginForm.style.display = 'flex';
+    if (dashboard) dashboard.style.display = 'none';
 }
 
-async function writeJSON(filePath, data) {
-    try {
-        await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-        return true;
-    } catch (error) {
-        console.error('Error writing file:', error);
-        return false;
-    }
+function showDashboard() {
+    console.log('Showing dashboard');
+    if (loginForm) loginForm.style.display = 'none';
+    if (dashboard) dashboard.style.display = 'block';
 }
 
-// Middleware untuk autentikasi
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
-        return res.status(401).json({ error: 'Access token required' });
+function initEventListeners() {
+    console.log('Initializing event listeners...');
+    
+    // Login form
+    if (loginFormElement) {
+        loginFormElement.addEventListener('submit', handleLogin);
+        console.log('Login form listener added');
     }
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ error: 'Invalid token' });
-        }
-        req.user = user;
-        next();
-    });
-}
-
-// Routes
-
-// 1. Login Admin
-app.post('/api/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-        
-        if (!username || !password) {
-            return res.status(400).json({ error: 'Username and password required' });
-        }
-
-        const users = await readJSON(USERS_FILE);
-        const user = users.find(u => u.username === username);
-        
-        if (!user || !await bcrypt.compare(password, user.password)) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        const token = jwt.sign(
-            { username: user.username, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-
-        res.json({
-            message: 'Login successful',
-            token,
-            user: { username: user.username, role: user.role }
+    
+    // Logout button
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+        console.log('Logout button listener added');
+    }
+    
+    // Navigation
+    const navItems = document.querySelectorAll('.nav-item');
+    navItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            const section = item.dataset.section;
+            switchSection(section);
         });
+    });
+    
+    // Refresh buttons
+    const refreshStats = document.getElementById('refreshStats');
+    if (refreshStats) {
+        refreshStats.addEventListener('click', loadOrdersData);
+    }
+    
+    const refreshOrders = document.getElementById('refreshOrders');
+    if (refreshOrders) {
+        refreshOrders.addEventListener('click', loadOrdersData);
+    }
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    console.log('Login form submitted');
+    
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    
+    console.log('Attempting login with username:', username);
+    
+    // Disable submit button
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
+    }
+    
+    try {
+        console.log('Sending login request to:', `${API_BASE_URL}/api/login`);
+        
+        const response = await fetch(`${API_BASE_URL}/api/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username, password })
+        });
+        
+        console.log('Response status:', response.status);
+        console.log('Response ok:', response.ok);
+        
+        const data = await response.json();
+        console.log('Response data:', data);
+        
+        if (response.ok && data.token) {
+            console.log('Login successful, storing token...');
+            authToken = data.token;
+            localStorage.setItem('adminToken', authToken);
+            
+            // Update admin name if element exists
+            const adminNameElement = document.getElementById('adminName');
+            if (adminNameElement && data.user) {
+                adminNameElement.textContent = data.user.username;
+            }
+            
+            showDashboard();
+            loadOrdersData();
+            showToast('Login berhasil!', 'success');
+        } else {
+            console.log('Login failed:', data.error);
+            showToast('Login gagal: ' + (data.error || 'Kredensial tidak valid'), 'error');
+        }
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        showToast('Terjadi kesalahan saat login: ' + error.message, 'error');
+    } finally {
+        // Re-enable submit button
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login';
+        }
     }
-});
+}
 
-// 2. Terima pesanan dari frontend
-app.post('/api/orders', async (req, res) => {
+function handleLogout() {
+    console.log('Logging out...');
+    authToken = null;
+    localStorage.removeItem('adminToken');
+    showLoginForm();
+    showToast('Logout berhasil', 'success');
+}
+
+function switchSection(sectionName) {
+    console.log('Switching to section:', sectionName);
+    
+    // Update navigation
+    const navItems = document.querySelectorAll('.nav-item');
+    navItems.forEach(item => {
+        item.classList.remove('active');
+        if (item.dataset.section === sectionName) {
+            item.classList.add('active');
+        }
+    });
+    
+    // Update content
+    const contentSections = document.querySelectorAll('.content-section');
+    contentSections.forEach(section => {
+        section.classList.remove('active');
+        if (section.id === sectionName + 'Section') {
+            section.classList.add('active');
+        }
+    });
+    
+    // Load data based on section
+    if (sectionName === 'orders') {
+        displayOrders();
+    } else if (sectionName === 'dashboard') {
+        updateDashboardStats();
+    }
+}
+
+async function loadOrdersData() {
+    if (!authToken) {
+        console.log('No auth token, cannot load orders');
+        return;
+    }
+    
+    console.log('Loading orders data...');
+    
     try {
-        const orderData = req.body;
-        
-        // Generate order ID
-        const orders = await readJSON(ORDERS_FILE);
-        const orderId = 'MKS' + Date.now().toString().slice(-8);
-        
-        const newOrder = {
-            id: orderId,
-            ...orderData,
-            createdAt: new Date().toISOString(),
-            status: 'Pending',
-            updatedAt: new Date().toISOString()
-        };
-        
-        orders.push(newOrder);
-        await writeJSON(ORDERS_FILE, orders);
-        
-        res.json({
-            success: true,
-            message: 'Order received successfully',
-            orderId,
-            order: newOrder
+        const response = await fetch(`${API_BASE_URL}/api/orders`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
         });
-    } catch (error) {
-        console.error('Order creation error:', error);
-        res.status(500).json({ error: 'Failed to create order' });
-    }
-});
-
-// 3. Get semua pesanan (Admin only)
-app.get('/api/orders', authenticateToken, async (req, res) => {
-    try {
-        const orders = await readJSON(ORDERS_FILE);
-        const { status, search, limit = 50, page = 1 } = req.query;
         
-        let filteredOrders = orders;
+        console.log('Orders response status:', response.status);
         
-        // Filter by status
-        if (status && status !== 'all') {
-            filteredOrders = filteredOrders.filter(order => 
-                order.status.toLowerCase() === status.toLowerCase()
-            );
+        if (response.status === 401) {
+            console.log('Token expired, redirecting to login...');
+            handleLogout();
+            return;
         }
         
-        // Search functionality
-        if (search) {
-            filteredOrders = filteredOrders.filter(order => 
-                order.id.toLowerCase().includes(search.toLowerCase()) ||
-                order.customerName?.toLowerCase().includes(search.toLowerCase()) ||
-                order.email?.toLowerCase().includes(search.toLowerCase())
-            );
-        }
+        const data = await response.json();
+        console.log('Orders data:', data);
         
-        // Pagination
-        const startIndex = (page - 1) * limit;
-        const endIndex = startIndex + parseInt(limit);
-        const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
-        
-        res.json({
-            orders: paginatedOrders,
-            total: filteredOrders.length,
-            page: parseInt(page),
-            limit: parseInt(limit),
-            totalPages: Math.ceil(filteredOrders.length / limit)
-        });
-    } catch (error) {
-        console.error('Error fetching orders:', error);
-        res.status(500).json({ error: 'Failed to fetch orders' });
-    }
-});
-
-// 4. Get pesanan berdasarkan ID
-app.get('/api/orders/:id', authenticateToken, async (req, res) => {
-    try {
-        const orders = await readJSON(ORDERS_FILE);
-        const order = orders.find(o => o.id === req.params.id);
-        
-        if (!order) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
-        
-        res.json(order);
-    } catch (error) {
-        console.error('Error fetching order:', error);
-        res.status(500).json({ error: 'Failed to fetch order' });
-    }
-});
-
-// 5. Update pesanan (Admin only)
-app.put('/api/orders/:id', authenticateToken, async (req, res) => {
-    try {
-        const orders = await readJSON(ORDERS_FILE);
-        const orderIndex = orders.findIndex(o => o.id === req.params.id);
-        
-        if (orderIndex === -1) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
-        
-        const updatedOrder = {
-            ...orders[orderIndex],
-            ...req.body,
-            updatedAt: new Date().toISOString()
-        };
-        
-        orders[orderIndex] = updatedOrder;
-        await writeJSON(ORDERS_FILE, orders);
-        
-        res.json({
-            message: 'Order updated successfully',
-            order: updatedOrder
-        });
-    } catch (error) {
-        console.error('Error updating order:', error);
-        res.status(500).json({ error: 'Failed to update order' });
-    }
-});
-
-// 6. Delete pesanan (Admin only)
-app.delete('/api/orders/:id', authenticateToken, async (req, res) => {
-    try {
-        const orders = await readJSON(ORDERS_FILE);
-        const orderIndex = orders.findIndex(o => o.id === req.params.id);
-        
-        if (orderIndex === -1) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
-        
-        const deletedOrder = orders.splice(orderIndex, 1)[0];
-        await writeJSON(ORDERS_FILE, orders);
-        
-        res.json({
-            message: 'Order deleted successfully',
-            order: deletedOrder
-        });
-    } catch (error) {
-        console.error('Error deleting order:', error);
-        res.status(500).json({ error: 'Failed to delete order' });
-    }
-});
-
-// 7. Dashboard stats (Admin only)
-app.get('/api/dashboard', authenticateToken, async (req, res) => {
-    try {
-        const orders = await readJSON(ORDERS_FILE);
-        
-        const stats = {
-            totalOrders: orders.length,
-            pendingOrders: orders.filter(o => o.status === 'Pending').length,
-            completedOrders: orders.filter(o => o.status === 'Completed').length,
-            totalRevenue: orders
-                .filter(o => o.status === 'Completed')
-                .reduce((sum, order) => sum + (parseFloat(order.totalPrice) || 0), 0),
-            recentOrders: orders
-                .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-                .slice(0, 5)
-        };
-        
-        res.json(stats);
-    } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
-        res.status(500).json({ error: 'Failed to fetch dashboard stats' });
-    }
-});
-
-// 8. Export pesanan untuk cetak
-app.get('/api/orders/export/:format', authenticateToken, async (req, res) => {
-    try {
-        const orders = await readJSON(ORDERS_FILE);
-        const { format } = req.params;
-        
-        if (format === 'csv') {
-            const csv = convertToCSV(orders);
-            res.setHeader('Content-Type', 'text/csv');
-            res.setHeader('Content-Disposition', 'attachment; filename=orders.csv');
-            res.send(csv);
-        } else if (format === 'json') {
-            res.setHeader('Content-Type', 'application/json');
-            res.setHeader('Content-Disposition', 'attachment; filename=orders.json');
-            res.send(JSON.stringify(orders, null, 2));
+        if (response.ok && data.success) {
+            currentOrders = data.orders || [];
+            console.log('Loaded', currentOrders.length, 'orders');
+            updateDashboardStats();
+            displayOrders();
+            showToast('Data berhasil dimuat', 'success');
         } else {
-            res.status(400).json({ error: 'Invalid format. Use csv or json' });
+            console.log('Failed to load orders:', data.error);
+            showToast('Gagal memuat data: ' + (data.error || 'Terjadi kesalahan'), 'error');
         }
     } catch (error) {
-        console.error('Error exporting orders:', error);
-        res.status(500).json({ error: 'Failed to export orders' });
+        console.error('Error loading orders:', error);
+        showToast('Terjadi kesalahan saat memuat data: ' + error.message, 'error');
+    }
+}
+
+function updateDashboardStats() {
+    console.log('Updating dashboard stats...');
+    
+    const totalOrders = currentOrders.length;
+    const pendingOrders = currentOrders.filter(o => o.status === 'Pending').length;
+    const completedOrders = currentOrders.filter(o => o.status === 'Completed').length;
+    const totalRevenue = currentOrders.reduce((sum, order) => sum + (order.finalTotal || order.totalPrice || 0), 0);
+    
+    // Update stats
+    const totalOrdersElement = document.getElementById('totalOrders');
+    if (totalOrdersElement) totalOrdersElement.textContent = totalOrders;
+    
+    const pendingOrdersElement = document.getElementById('pendingOrders');
+    if (pendingOrdersElement) pendingOrdersElement.textContent = pendingOrders;
+    
+    const completedOrdersElement = document.getElementById('completedOrders');
+    if (completedOrdersElement) completedOrdersElement.textContent = completedOrders;
+    
+    const totalRevenueElement = document.getElementById('totalRevenue');
+    if (totalRevenueElement) totalRevenueElement.textContent = `Rp ${totalRevenue.toLocaleString()}`;
+    
+    // Update recent orders table
+    const recentOrders = currentOrders.slice(-5).reverse();
+    const tbody = document.getElementById('recentOrdersBody');
+    if (tbody) {
+        tbody.innerHTML = recentOrders.map(order => `
+            <tr>
+                <td>${order.id}</td>
+                <td>${order.customerName}</td>
+                <td>${getProductName(order)}</td>
+                <td>Rp ${(order.finalTotal || order.totalPrice || 0).toLocaleString()}</td>
+                <td><span class="status-badge ${order.status?.toLowerCase() || 'pending'}">${order.status || 'Pending'}</span></td>
+                <td>${formatDate(order.createdAt)}</td>
+            </tr>
+        `).join('');
+    }
+}
+
+function displayOrders() {
+    console.log('Displaying orders...');
+    
+    const tbody = document.getElementById('ordersBody');
+    if (!tbody) {
+        console.log('Orders table body not found');
+        return;
+    }
+    
+    tbody.innerHTML = currentOrders.map(order => `
+        <tr>
+            <td>${order.id}</td>
+            <td>
+                <div class="customer-info">
+                    <strong>${order.customerName}</strong><br>
+                    ${order.phoneNumber}<br>
+                    ${order.email}
+                </div>
+            </td>
+            <td>
+                <div class="product-info">
+                    <strong>${getProductName(order)}</strong><br>
+                    Bahan: ${order.materialName}<br>
+                    Ukuran: ${order.size}, Warna: ${order.colorName}<br>
+                    Jumlah: ${order.quantity} pcs
+                </div>
+            </td>
+            <td>Rp ${(order.finalTotal || order.totalPrice || 0).toLocaleString()}</td>
+            <td>
+                <span class="status-badge ${order.status?.toLowerCase() || 'pending'}">${order.status || 'Pending'}</span>
+            </td>
+            <td>${formatDate(order.createdAt)}</td>
+            <td>
+                <button class="btn-view" onclick="viewOrderDetails('${order.id}')">
+                    <i class="fas fa-eye"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function getProductName(order) {
+    if (order.productType === 'kaos') return 'Kaos Custom';
+    if (order.productType === 'jaket') return 'Jaket Custom';
+    if (order.productType === 'lusinan' || order.productType === 'jaket_lusinan') return 'Paket Lusinan';
+    return 'Produk Custom';
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function viewOrderDetails(orderId) {
+    const order = currentOrders.find(o => o.id === orderId);
+    if (!order) return;
+    
+    const modalBody = document.getElementById('orderModalBody');
+    if (modalBody) {
+        modalBody.innerHTML = `
+            <div class="order-details">
+                <h4>Informasi Pesanan</h4>
+                <p><strong>Order ID:</strong> ${order.id}</p>
+                <p><strong>Tanggal:</strong> ${formatDate(order.createdAt)}</p>
+                <p><strong>Status:</strong> ${order.status || 'Pending'}</p>
+                
+                <h4>Informasi Produk</h4>
+                <p><strong>Produk:</strong> ${getProductName(order)}</p>
+                <p><strong>Bahan:</strong> ${order.materialName}</p>
+                <p><strong>Ukuran:</strong> ${order.size}</p>
+                <p><strong>Warna:</strong> ${order.colorName}</p>
+                <p><strong>Jumlah:</strong> ${order.quantity} pcs</p>
+                
+                <h4>Informasi Customer</h4>
+                <p><strong>Nama:</strong> ${order.customerName}</p>
+                <p><strong>Phone:</strong> ${order.phoneNumber}</p>
+                <p><strong>Email:</strong> ${order.email}</p>
+                <p><strong>Alamat:</strong> ${order.address}</p>
+                
+                <h4>Pengiriman</h4>
+                <p><strong>Metode:</strong> ${order.shippingMethod}</p>
+                <p><strong>Biaya Kirim:</strong> Rp ${(order.shippingCost || 0).toLocaleString()}</p>
+                
+                <h4>Total Pembayaran</h4>
+                <p><strong>Subtotal:</strong> Rp ${(order.totalPrice || 0).toLocaleString()}</p>
+                <p><strong>Biaya Kirim:</strong> Rp ${(order.shippingCost || 0).toLocaleString()}</p>
+                <p><strong>Total:</strong> Rp ${(order.finalTotal || order.totalPrice || 0).toLocaleString()}</p>
+                
+                ${order.customerNotes ? `<h4>Catatan Customer</h4><p>${order.customerNotes}</p>` : ''}
+            </div>
+        `;
+    }
+    
+    const modal = document.getElementById('orderModal');
+    if (modal) {
+        modal.style.display = 'block';
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Create toast element if container exists
+    const toastContainer = document.getElementById('toastContainer');
+    if (toastContainer) {
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = `
+            <span>${message}</span>
+            <button onclick="this.parentElement.remove()">×</button>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.remove();
+        }, 5000);
+    } else {
+        // Fallback to alert if toast container doesn't exist
+        alert(message);
+    }
+}
+
+// Modal functionality
+document.addEventListener('click', (e) => {
+    const modal = document.getElementById('orderModal');
+    if (modal && (e.target === modal || e.target.classList.contains('close') || e.target.classList.contains('btn-cancel'))) {
+        modal.style.display = 'none';
     }
 });
 
-// Helper function untuk convert ke CSV
+// Export functions (simplified)
+function exportToCSV() {
+    if (currentOrders.length === 0) {
+        showToast('Tidak ada data untuk diexport', 'warning');
+        return;
+    }
+    
+    const csvContent = convertToCSV(currentOrders);
+    downloadFile(csvContent, 'orders.csv', 'text/csv');
+    showToast('Data berhasil diexport ke CSV', 'success');
+}
+
+function exportToJSON() {
+    if (currentOrders.length === 0) {
+        showToast('Tidak ada data untuk diexport', 'warning');
+        return;
+    }
+    
+    const jsonContent = JSON.stringify(currentOrders, null, 2);
+    downloadFile(jsonContent, 'orders.json', 'application/json');
+    showToast('Data berhasil diexport ke JSON', 'success');
+}
+
 function convertToCSV(orders) {
-    if (!orders.length) return '';
+    const headers = ['Order ID', 'Customer Name', 'Phone', 'Email', 'Product', 'Material', 'Size', 'Color', 'Quantity', 'Total Price', 'Status', 'Created At'];
+    const rows = orders.map(order => [
+        order.id,
+        order.customerName,
+        order.phoneNumber,
+        order.email,
+        getProductName(order),
+        order.materialName,
+        order.size,
+        order.colorName,
+        order.quantity,
+        order.finalTotal || order.totalPrice || 0,
+        order.status || 'Pending',
+        formatDate(order.createdAt)
+    ]);
     
-    const headers = ['ID', 'Customer Name', 'Email', 'Phone', 'Product', 'Quantity', 'Total Price', 'Status', 'Created At'];
-    const csv = [headers.join(',')];
-    
-    orders.forEach(order => {
-        const row = [
-            order.id,
-            order.customerName || '',
-            order.email || '',
-            order.phone || '',
-            order.productType || '',
-            order.quantity || '',
-            order.totalPrice || '',
-            order.status || '',
-            order.createdAt || ''
-        ];
-        csv.push(row.join(','));
-    });
-    
-    return csv.join('\n');
+    return [headers, ...rows].map(row => row.map(field => `"${field}"`).join(',')).join('\n');
 }
 
-// Serve admin panel
-app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-
-// Health check
-app.get('/health', (req, res) => {
-    res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// Error handling middleware
-app.use((error, req, res, next) => {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-});
-
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({ error: 'Endpoint not found' });
-});
-
-// Start server
-async function startServer() {
-    await initializeData();
-    app.listen(PORT, () => {
-        console.log(`🚀 Server running on port ${PORT}`);
-        console.log(`📊 Admin panel: http://localhost:${PORT}/admin`);
-        console.log(`🔐 Default admin: username=admin, password=admin123`);
-    });
+function downloadFile(content, fileName, contentType) {
+    const blob = new Blob([content], { type: contentType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
-startServer().catch(console.error);
+// Add export event listeners when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    const exportCSVBtn = document.getElementById('exportCSV');
+    if (exportCSVBtn) {
+        exportCSVBtn.addEventListener('click', exportToCSV);
+    }
+    
+    const exportJSONBtn = document.getElementById('exportJSON');
+    if (exportJSONBtn) {
+        exportJSONBtn.addEventListener('click', exportToJSON);
+    }
+});
 
-module.exports = app;
+console.log('Admin script loaded successfully');
