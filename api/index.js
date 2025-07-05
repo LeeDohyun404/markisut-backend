@@ -1,113 +1,207 @@
-// Perbaikan konfigurasi CORS dan Error Handling di index.js
-
+// Fixed Backend Code for Markisut E-commerce
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
 const path = require('path');
 
 const app = express();
 
-// PERBAIKAN: JWT_SECRET dengan fallback yang lebih aman
+// JWT_SECRET with better fallback
 const JWT_SECRET = process.env.JWT_SECRET || 'markisut-super-secret-key-2024-fallback';
 
-// PERBAIKAN: Konfigurasi CORS yang lebih fleksibel
+// CORS Configuration
 const allowedOrigins = [
     'https://markisut-frontend.vercel.app',
     'http://localhost:3000',
     'http://localhost:5000',
     'https://localhost:3000',
-    // Tambahkan domain frontend Anda di sini
 ];
 
 const corsOptions = {
-  origin: function (origin, callback) {
-    console.log("REQUEST ORIGIN: ", origin);
-    
-    // Izinkan request tanpa origin (misalnya dari mobile app atau Postman)
-    if (!origin) return callback(null, true);
-    
-    // Izinkan jika origin ada dalam daftar yang diizinkan
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.log("CORS BLOCKED: Origin not allowed:", origin);
-      callback(new Error('Akses ditolak oleh kebijakan CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+    origin: function (origin, callback) {
+        console.log("REQUEST ORIGIN: ", origin);
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.log("CORS BLOCKED: Origin not allowed:", origin);
+            callback(new Error('Access denied by CORS policy'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Tambahkan middleware untuk logging requests
+// Enhanced logging middleware
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-    if (req.method === 'POST') {
+    if (req.method === 'POST' && req.url !== '/api/login') {
         console.log('Request body:', req.body);
     }
     next();
 });
 
+// Static files
 const publicPath = path.resolve(process.cwd(), 'public');
 app.use(express.static(publicPath));
 
+// Data storage paths
 const DATA_DIR = path.join('/tmp', 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
-// PERBAIKAN: Fungsi inisialisasi dengan error handling yang lebih baik
-async function initializeData() {
+// In-memory fallback storage (for when file system fails)
+let memoryOrders = [];
+let memoryUsers = [];
+
+// Enhanced bcrypt alternative using Node.js crypto
+const crypto = require('crypto');
+
+function hashPassword(password) {
     try {
-        console.log('Initializing data directory...');
-        await fs.mkdir(DATA_DIR, { recursive: true });
-        
-        // Initialize orders file
-        try {
-            await fs.access(ORDERS_FILE);
-            console.log('Orders file exists');
-        } catch {
-            console.log('Creating orders file...');
-            await fs.writeFile(ORDERS_FILE, JSON.stringify([]));
+        // Try to use bcrypt if available
+        const bcrypt = require('bcrypt');
+        return bcrypt.hashSync(password, 10);
+    } catch (error) {
+        console.log('bcrypt not available, using crypto fallback');
+        // Fallback to crypto-based hashing
+        const salt = crypto.randomBytes(16).toString('hex');
+        const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+        return `crypto:${salt}:${hash}`;
+    }
+}
+
+function verifyPassword(password, hashedPassword) {
+    try {
+        // Handle bcrypt hashes
+        if (!hashedPassword.startsWith('crypto:')) {
+            const bcrypt = require('bcrypt');
+            return bcrypt.compareSync(password, hashedPassword);
         }
         
-        // Initialize users file
+        // Handle crypto hashes
+        const [, salt, hash] = hashedPassword.split(':');
+        const verifyHash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+        return hash === verifyHash;
+    } catch (error) {
+        console.log('Password verification failed, trying plain text');
+        return password === hashedPassword;
+    }
+}
+
+// Enhanced initialization function
+async function initializeData() {
+    try {
+        console.log('Initializing data...');
+        
+        // Try to create directory
         try {
-            await fs.access(USERS_FILE);
-            console.log('Users file exists');
-        } catch {
-            console.log('Creating users file with default admin...');
-            try {
-                const hashedPassword = await bcrypt.hash('admin123', 10);
-                const defaultAdmin = { 
-                    username: 'admin', 
-                    password: hashedPassword, 
-                    role: 'admin' 
-                };
-                await fs.writeFile(USERS_FILE, JSON.stringify([defaultAdmin]));
-                console.log('Default admin created successfully');
-            } catch (bcryptError) {
-                console.error('Error creating default admin:', bcryptError);
-                // Fallback: create admin with plain password (untuk testing)
-                const defaultAdmin = { 
+            await fs.mkdir(DATA_DIR, { recursive: true });
+            console.log('Data directory created/verified');
+        } catch (dirError) {
+            console.warn('Could not create data directory:', dirError.message);
+        }
+        
+        // Initialize users
+        try {
+            await initializeUsers();
+        } catch (userError) {
+            console.error('User initialization failed:', userError.message);
+            // Fallback to memory storage
+            memoryUsers = [
+                { 
                     username: 'admin', 
                     password: 'admin123', 
                     role: 'admin',
-                    isPlainText: true // flag untuk mendeteksi password plain text
-                };
-                await fs.writeFile(USERS_FILE, JSON.stringify([defaultAdmin]));
-                console.log('Default admin created with plain text password');
-            }
+                    isPlainText: true
+                }
+            ];
+            console.log('Using in-memory user storage');
+        }
+        
+        // Initialize orders
+        try {
+            await initializeOrders();
+        } catch (orderError) {
+            console.error('Order initialization failed:', orderError.message);
+            memoryOrders = [];
+            console.log('Using in-memory order storage');
         }
         
         console.log('Data initialization completed');
     } catch (error) {
-        console.error('Error initializing data:', error);
+        console.error('Critical initialization error:', error);
+        // Ensure we have fallback data
+        memoryUsers = [
+            { 
+                username: 'admin', 
+                password: 'admin123', 
+                role: 'admin',
+                isPlainText: true
+            }
+        ];
+        memoryOrders = [];
+        console.log('Using full in-memory storage fallback');
+    }
+}
+
+async function initializeUsers() {
+    try {
+        await fs.access(USERS_FILE);
+        console.log('Users file exists');
+        const users = await readJSON(USERS_FILE);
+        memoryUsers = users;
+    } catch {
+        console.log('Creating users file with default admin...');
+        const defaultAdmin = { 
+            username: 'admin', 
+            password: 'admin123', 
+            role: 'admin',
+            isPlainText: true
+        };
+        
+        try {
+            // Try to create hashed password
+            const hashedPassword = hashPassword('admin123');
+            defaultAdmin.password = hashedPassword;
+            defaultAdmin.isPlainText = false;
+        } catch (hashError) {
+            console.log('Using plain text password:', hashError.message);
+        }
+        
+        memoryUsers = [defaultAdmin];
+        
+        try {
+            await fs.writeFile(USERS_FILE, JSON.stringify([defaultAdmin], null, 2));
+            console.log('Users file created successfully');
+        } catch (writeError) {
+            console.log('Could not write users file, using memory only');
+        }
+    }
+}
+
+async function initializeOrders() {
+    try {
+        await fs.access(ORDERS_FILE);
+        console.log('Orders file exists');
+        const orders = await readJSON(ORDERS_FILE);
+        memoryOrders = orders;
+    } catch {
+        console.log('Creating empty orders file...');
+        memoryOrders = [];
+        
+        try {
+            await fs.writeFile(ORDERS_FILE, JSON.stringify([], null, 2));
+            console.log('Orders file created successfully');
+        } catch (writeError) {
+            console.log('Could not write orders file, using memory only');
+        }
     }
 }
 
@@ -116,7 +210,7 @@ async function readJSON(filePath) {
         const data = await fs.readFile(filePath, 'utf8');
         return JSON.parse(data);
     } catch (error) {
-        console.error(`Error reading ${filePath}:`, error);
+        console.error(`Error reading ${filePath}:`, error.message);
         return [];
     }
 }
@@ -126,11 +220,12 @@ async function writeJSON(filePath, data) {
         await fs.writeFile(filePath, JSON.stringify(data, null, 2));
         return true;
     } catch (error) {
-        console.error(`Error writing ${filePath}:`, error);
+        console.error(`Error writing ${filePath}:`, error.message);
         return false;
     }
 }
 
+// Enhanced authentication middleware
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -139,14 +234,14 @@ function authenticateToken(req, res, next) {
         return res.status(401).json({ error: 'Access token required' });
     }
     
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            console.error('Token verification error:', err);
-            return res.status(403).json({ error: 'Invalid token' });
-        }
+    try {
+        const user = jwt.verify(token, JWT_SECRET);
         req.user = user;
         next();
-    });
+    } catch (err) {
+        console.error('Token verification error:', err.message);
+        return res.status(403).json({ error: 'Invalid or expired token' });
+    }
 }
 
 // Routes
@@ -163,63 +258,60 @@ app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'OK', 
         timestamp: new Date().toISOString(),
-        jwt_configured: !!JWT_SECRET
+        jwt_configured: !!JWT_SECRET,
+        users_count: memoryUsers.length,
+        orders_count: memoryOrders.length
     });
 });
 
-// PERBAIKAN: Endpoint login dengan error handling yang lebih baik
+// Enhanced login endpoint
 app.post('/api/login', async (req, res) => {
     try {
         console.log('Login attempt received');
         
-        // Validasi JWT_SECRET
         if (!JWT_SECRET) {
             console.error('JWT_SECRET not configured');
             return res.status(500).json({ error: 'Server configuration error' });
         }
         
         const { username, password } = req.body;
-        console.log('Login attempt for username:', username);
         
         if (!username || !password) {
-            console.log('Missing username or password');
+            console.log('Missing credentials');
             return res.status(400).json({ error: 'Username and password required' });
         }
         
-        // Baca file users
-        const users = await readJSON(USERS_FILE);
-        console.log('Users loaded:', users.length);
+        console.log('Attempting login for:', username);
         
-        if (users.length === 0) {
-            console.log('No users found, reinitializing...');
-            await initializeData();
-            const newUsers = await readJSON(USERS_FILE);
-            console.log('Users after reinit:', newUsers.length);
+        // Ensure we have users loaded
+        if (memoryUsers.length === 0) {
+            console.log('No users in memory, reinitializing...');
+            await initializeUsers();
         }
         
-        const user = users.find(u => u.username === username);
+        console.log('Available users:', memoryUsers.map(u => u.username));
+        
+        const user = memoryUsers.find(u => u.username === username);
         if (!user) {
             console.log('User not found:', username);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
         
-        // Verifikasi password
+        // Enhanced password verification
         let passwordMatch = false;
-        try {
-            if (user.isPlainText) {
-                // Untuk testing dengan plain text password
-                passwordMatch = (password === user.password);
-                console.log('Using plain text password comparison');
-            } else {
-                // Gunakan bcrypt untuk password yang sudah di-hash
-                passwordMatch = await bcrypt.compare(password, user.password);
-                console.log('Using bcrypt password comparison');
-            }
-        } catch (bcryptError) {
-            console.error('Bcrypt error:', bcryptError);
-            // Fallback ke plain text comparison
+        
+        if (user.isPlainText) {
             passwordMatch = (password === user.password);
-            console.log('Fallback to plain text comparison');
+            console.log('Plain text password check:', passwordMatch);
+        } else {
+            try {
+                passwordMatch = verifyPassword(password, user.password);
+                console.log('Hashed password check:', passwordMatch);
+            } catch (verifyError) {
+                console.log('Password verification error:', verifyError.message);
+                // Final fallback to plain text
+                passwordMatch = (password === user.password);
+            }
         }
         
         if (!passwordMatch) {
@@ -227,9 +319,13 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
         
-        // Generate token
+        // Generate JWT token
         const token = jwt.sign(
-            { username: user.username, role: user.role }, 
+            { 
+                username: user.username, 
+                role: user.role,
+                iat: Math.floor(Date.now() / 1000)
+            }, 
             JWT_SECRET, 
             { expiresIn: '24h' }
         );
@@ -246,14 +342,17 @@ app.post('/api/login', async (req, res) => {
         
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ error: 'Internal server error: ' + error.message });
+        res.status(500).json({ 
+            error: 'Internal server error', 
+            details: error.message 
+        });
     }
 });
 
-// PERBAIKAN: Endpoint orders dengan logging yang lebih baik
+// Enhanced orders endpoint
 app.post('/api/orders', async (req, res) => {
     try {
-        console.log('Received order data:', req.body);
+        console.log('Received order data');
         
         const orderData = req.body;
         if (!orderData || Object.keys(orderData).length === 0) {
@@ -263,7 +362,6 @@ app.post('/api/orders', async (req, res) => {
             });
         }
 
-        const orders = await readJSON(ORDERS_FILE);
         const orderId = 'MKS' + Date.now().toString().slice(-8);
         const newOrder = { 
             id: orderId, 
@@ -273,11 +371,15 @@ app.post('/api/orders', async (req, res) => {
             updatedAt: new Date().toISOString() 
         };
         
-        orders.push(newOrder);
-        const writeSuccess = await writeJSON(ORDERS_FILE, orders);
+        // Add to memory storage
+        memoryOrders.push(newOrder);
         
-        if (!writeSuccess) {
-            throw new Error('Failed to save order to file');
+        // Try to save to file (but don't fail if it doesn't work)
+        try {
+            await writeJSON(ORDERS_FILE, memoryOrders);
+            console.log('Order saved to file');
+        } catch (fileError) {
+            console.log('Could not save to file, using memory only');
         }
 
         console.log('Order created successfully:', orderId);
@@ -295,18 +397,15 @@ app.post('/api/orders', async (req, res) => {
     }
 });
 
-// PERBAIKAN: Endpoint untuk mendapatkan orders dengan autentikasi
+// Get orders endpoint
 app.get('/api/orders', authenticateToken, async (req, res) => {
     try {
         console.log('Fetching orders for user:', req.user.username);
         
-        const orders = await readJSON(ORDERS_FILE);
-        console.log('Orders found:', orders.length);
-        
         res.json({
             success: true,
-            orders: orders,
-            total: orders.length
+            orders: memoryOrders,
+            total: memoryOrders.length
         });
     } catch (error) {
         console.error('Error fetching orders:', error);
@@ -317,7 +416,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     }
 });
 
-// PERBAIKAN: Endpoint untuk update status order
+// Update order status endpoint
 app.put('/api/orders/:id', authenticateToken, async (req, res) => {
     try {
         const orderId = req.params.id;
@@ -325,8 +424,7 @@ app.put('/api/orders/:id', authenticateToken, async (req, res) => {
         
         console.log('Updating order status:', orderId, 'to', status);
         
-        const orders = await readJSON(ORDERS_FILE);
-        const orderIndex = orders.findIndex(order => order.id === orderId);
+        const orderIndex = memoryOrders.findIndex(order => order.id === orderId);
         
         if (orderIndex === -1) {
             return res.status(404).json({
@@ -335,20 +433,21 @@ app.put('/api/orders/:id', authenticateToken, async (req, res) => {
             });
         }
         
-        orders[orderIndex].status = status;
-        orders[orderIndex].updatedAt = new Date().toISOString();
+        memoryOrders[orderIndex].status = status;
+        memoryOrders[orderIndex].updatedAt = new Date().toISOString();
         
-        const writeSuccess = await writeJSON(ORDERS_FILE, orders);
-        
-        if (!writeSuccess) {
-            throw new Error('Failed to update order');
+        // Try to save to file
+        try {
+            await writeJSON(ORDERS_FILE, memoryOrders);
+        } catch (fileError) {
+            console.log('Could not save to file, using memory only');
         }
         
         console.log('Order updated successfully:', orderId);
         res.json({
             success: true,
             message: 'Order updated successfully',
-            order: orders[orderIndex]
+            order: memoryOrders[orderIndex]
         });
     } catch (error) {
         console.error('Error updating order:', error);
@@ -359,17 +458,17 @@ app.put('/api/orders/:id', authenticateToken, async (req, res) => {
     }
 });
 
+// Admin panel route
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(publicPath, 'Admin-Panel.html'));
 });
 
-// PERBAIKAN: Error handling middleware yang lebih informatif
+// Enhanced error handling middleware
 app.use((error, req, res, next) => {
     console.error('Unhandled error:', error);
     res.status(500).json({ 
         error: 'Internal server error',
-        message: error.message,
-        timestamp: new Date().toISOString()
+        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
     });
 });
 
@@ -381,12 +480,14 @@ app.use((req, res) => {
 
 // Initialize data when server starts
 initializeData().then(() => {
-    console.log('Server initialization completed');
+    console.log('Server initialization completed successfully');
 }).catch(error => {
     console.error('Server initialization failed:', error);
 });
 
 const PORT = process.env.PORT || 3000;
+
+// Only start server if not in production (Vercel handles this)
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);

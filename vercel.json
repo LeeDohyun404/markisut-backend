@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "name": "markisut-backend",
   "builds": [
     {
       "src": "index.js",
@@ -9,17 +8,20 @@
   ],
   "routes": [
     {
+      "src": "/admin",
+      "dest": "/public/Admin-Panel.html"
+    },
+    {
       "src": "/(.*)",
-      "dest": "index.js"
+      "dest": "/index.js"
     }
   ],
+  "env": {
+    "NODE_ENV": "production"
+  },
   "functions": {
     "index.js": {
       "maxDuration": 30
     }
-  },
-  "env": {
-    "NODE_ENV": "production",
-    "JWT_SECRET": "markisut-super-secret-key-2024-production"
   }
 }
