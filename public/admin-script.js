@@ -26,17 +26,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
+            // Menggunakan path relatif karena script ini disajikan dari domain yang sama dengan API
             const response = await fetch(`/api${endpoint}`, config);
+            
             if (response.status === 401 || response.status === 403) {
-                // Token tidak valid atau kedaluwarsa
-                logout();
-                return;
+                logout(); // Token tidak valid, logout otomatis
+                throw new Error('Sesi tidak valid atau telah berakhir. Silakan login kembali.');
             }
             if (!response.ok) {
-                const errorData = await response.json();
+                const errorData = await response.json().catch(() => ({ error: 'Gagal memproses respons server.' }));
                 throw new Error(errorData.error || 'API request failed');
             }
-            if (response.status === 204) return null;
+            if (response.status === 204) return null; // Handle No Content response
             return response.json();
         } catch (error) {
             console.error(`API Request Error to ${endpoint}:`, error);
@@ -45,17 +46,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ===============================================
-    // FUNGSI LOGIN & LOGOUT
+    // FUNGSI TAMPILAN & LOGIN/LOGOUT
     // ===============================================
 
     function showDashboard() {
         loginFormContainer.style.display = 'none';
         dashboardContainer.style.display = 'grid';
+        const user = JSON.parse(localStorage.getItem('adminUser'));
+        if (user) {
+            adminNameSpan.textContent = user.username;
+        }
         loadDashboardStats(); // Muat statistik saat dashboard ditampilkan
     }
 
     function showLogin() {
         localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminUser');
         loginFormContainer.style.display = 'flex';
         dashboardContainer.style.display = 'none';
     }
@@ -77,7 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) throw new Error(data.error || 'Login failed');
             
             localStorage.setItem('adminToken', data.token);
-            adminNameSpan.textContent = data.user.username;
+            localStorage.setItem('adminUser', JSON.stringify(data.user)); // Simpan info user
             showDashboard();
         } catch (error) {
             alert('Login Gagal: ' + error.message);
@@ -115,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('pendingOrders').textContent = stats.pendingOrders || 0;
             document.getElementById('completedOrders').textContent = stats.completedOrders || 0;
             const revenue = stats.totalRevenue || 0;
-            document.getElementById('totalRevenue').textContent = `Rp ${revenue.toLocaleString()}`;
+            document.getElementById('totalRevenue').textContent = `Rp ${revenue.toLocaleString('id-ID')}`;
             
             const recentOrdersBody = document.getElementById('recentOrdersBody');
             recentOrdersBody.innerHTML = '';
@@ -123,16 +129,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 recentOrdersBody.innerHTML += `
                     <tr>
                         <td>${order.id}</td>
-                        <td>${order.customerName}</td>
+                        <td>${order.customerName || ''}</td>
                         <td>${order.productType || 'N/A'}</td>
-                        <td>Rp ${(order.finalTotal || 0).toLocaleString()}</td>
+                        <td>Rp ${(order.finalTotal || 0).toLocaleString('id-ID')}</td>
                         <td><span class="status-badge status-${(order.status || 'unknown').toLowerCase()}">${order.status || 'Unknown'}</span></td>
                         <td>${new Date(order.createdAt).toLocaleDateString('id-ID')}</td>
                     </tr>
                 `;
             });
         } catch (error) {
-            alert('Gagal memuat statistik dashboard.');
+            alert('Gagal memuat statistik dashboard: ' + error.message);
         }
     }
 
@@ -151,21 +157,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 ordersBody.innerHTML += `
                     <tr>
                         <td>${order.id}</td>
-                        <td>${order.customerName}<br><small>${order.email}</small></td>
+                        <td>${order.customerName || ''}<br><small>${order.email || ''}</small></td>
                         <td>${order.productType || 'N/A'} - ${order.quantity} pcs</td>
-                        <td>Rp ${(order.finalTotal || 0).toLocaleString()}</td>
+                        <td>Rp ${(order.finalTotal || 0).toLocaleString('id-ID')}</td>
                         <td><span class="status-badge status-${(order.status || 'unknown').toLowerCase()}">${order.status || 'Unknown'}</span></td>
                         <td>${new Date(order.createdAt).toLocaleDateString('id-ID')}</td>
                         <td class="action-buttons">
                             <button class="btn-action btn-view">View</button>
-                            <button class="btn-action btn-edit">Edit</button>
-                            <button class="btn-action btn-delete">Delete</button>
                         </td>
                     </tr>
                 `;
             });
         } catch (error) {
-            alert('Gagal memuat data pesanan.');
+            alert('Gagal memuat data pesanan: ' + error.message);
         }
     }
 
