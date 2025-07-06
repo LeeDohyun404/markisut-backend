@@ -8,12 +8,8 @@
   ],
   "routes": [
     {
-      "src": "/admin",
-      "dest": "/public/Admin-Panel.html"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/index.js"
+      "dest": "index.js"
     }
   ],
   "env": {
