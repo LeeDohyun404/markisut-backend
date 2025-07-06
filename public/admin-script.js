@@ -86,6 +86,12 @@ async function handleLogin(e) {
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
     
+    // Validation
+    if (!username || !password) {
+        showToast('Username dan password harus diisi', 'error');
+        return;
+    }
+    
     console.log('Attempting login with username:', username);
     
     // Disable submit button
@@ -101,18 +107,28 @@ async function handleLogin(e) {
         const response = await fetch(`${API_BASE_URL}/api/login`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
             },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ 
+                username: username.trim(), 
+                password: password.trim() 
+            })
         });
         
         console.log('Response status:', response.status);
         console.log('Response ok:', response.ok);
         
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error('Server tidak merespon dengan format JSON yang valid');
+        }
+        
         const data = await response.json();
         console.log('Response data:', data);
         
-        if (response.ok && data.token) {
+        if (response.ok && data.success && data.token) {
             console.log('Login successful, storing token...');
             authToken = data.token;
             localStorage.setItem('adminToken', authToken);
@@ -120,19 +136,32 @@ async function handleLogin(e) {
             // Update admin name if element exists
             const adminNameElement = document.getElementById('adminName');
             if (adminNameElement && data.user) {
-                adminNameElement.textContent = data.user.username;
+                adminNameElement.textContent = data.user.username || username;
             }
             
             showDashboard();
-            loadOrdersData();
+            await loadOrdersData();
             showToast('Login berhasil!', 'success');
+            
+            // Clear form
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            
         } else {
-            console.log('Login failed:', data.error);
-            showToast('Login gagal: ' + (data.error || 'Kredensial tidak valid'), 'error');
+            console.log('Login failed:', data.error || data.message);
+            showToast('Login gagal: ' + (data.error || data.message || 'Kredensial tidak valid'), 'error');
         }
     } catch (error) {
         console.error('Login error:', error);
-        showToast('Terjadi kesalahan saat login: ' + error.message, 'error');
+        
+        // Handle specific error types
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            showToast('Tidak dapat terhubung ke server. Periksa koneksi internet Anda.', 'error');
+        } else if (error.message.includes('JSON')) {
+            showToast('Server error: Response tidak valid', 'error');
+        } else {
+            showToast('Terjadi kesalahan saat login: ' + error.message, 'error');
+        }
     } finally {
         // Re-enable submit button
         if (submitBtn) {
@@ -146,6 +175,7 @@ function handleLogout() {
     console.log('Logging out...');
     authToken = null;
     localStorage.removeItem('adminToken');
+    currentOrders = [];
     showLoginForm();
     showToast('Logout berhasil', 'success');
 }
@@ -189,9 +219,11 @@ async function loadOrdersData() {
     
     try {
         const response = await fetch(`${API_BASE_URL}/api/orders`, {
+            method: 'GET',
             headers: {
                 'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
             }
         });
         
@@ -203,22 +235,31 @@ async function loadOrdersData() {
             return;
         }
         
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const data = await response.json();
         console.log('Orders data:', data);
         
-        if (response.ok && data.success) {
-            currentOrders = data.orders || [];
+        if (data.success && Array.isArray(data.orders)) {
+            currentOrders = data.orders;
             console.log('Loaded', currentOrders.length, 'orders');
             updateDashboardStats();
             displayOrders();
             showToast('Data berhasil dimuat', 'success');
         } else {
-            console.log('Failed to load orders:', data.error);
-            showToast('Gagal memuat data: ' + (data.error || 'Terjadi kesalahan'), 'error');
+            console.log('Invalid orders data structure:', data);
+            showToast('Format data tidak valid dari server', 'error');
         }
     } catch (error) {
         console.error('Error loading orders:', error);
-        showToast('Terjadi kesalahan saat memuat data: ' + error.message, 'error');
+        
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            showToast('Tidak dapat terhubung ke server untuk memuat data', 'error');
+        } else {
+            showToast('Terjadi kesalahan saat memuat data: ' + error.message, 'error');
+        }
     }
 }
 
@@ -310,14 +351,19 @@ function getProductName(order) {
 
 function formatDate(dateString) {
     if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('id-ID', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('id-ID', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } catch (error) {
+        console.error('Error formatting date:', error);
+        return 'Invalid Date';
+    }
 }
 
 function viewOrderDetails(orderId) {
@@ -380,10 +426,13 @@ function showToast(message, type = 'info') {
         toastContainer.appendChild(toast);
         
         setTimeout(() => {
-            toast.remove();
+            if (toast.parentElement) {
+                toast.remove();
+            }
         }, 5000);
     } else {
-        // Fallback to alert if toast container doesn't exist
+        // Fallback to console log and alert
+        console.log(`${type.toUpperCase()}: ${message}`);
         alert(message);
     }
 }
