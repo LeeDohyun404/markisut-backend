@@ -13,7 +13,8 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 // Konfigurasi CORS
 const allowedOrigins = [
-    'https://markisut-frontend.vercel.app' // Ganti jika URL frontend Anda berbeda
+    'https://markisut-frontend.vercel.app',       // Untuk frontend utama
+    'https://markisut-backend.vercel.app'     // <-- TAMBAHKAN INI (ganti jika nama proyek Anda berbeda)
 ];
 
 const corsOptions = {
