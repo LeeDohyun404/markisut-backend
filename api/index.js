@@ -82,16 +82,30 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// GANTI SELURUH BLOK app.post('/api/login', ...) DENGAN INI
 app.post('/api/login', async (req, res) => {
     try {
+        // Langkah Pengaman: Pastikan file user ada, jika tidak, buat.
+        try {
+            await fs.access(USERS_FILE);
+        } catch {
+            console.log("File user tidak ditemukan, membuat ulang...");
+            await initializeData(); // Panggil fungsi inisialisasi untuk membuat ulang file
+        }
+
+        // Lanjutan proses login seperti biasa
         if (!JWT_SECRET) throw new Error('JWT_SECRET not configured on the server.');
+
         const { username, password } = req.body;
         if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+
         const users = await readJSON(USERS_FILE);
         const user = users.find(u => u.username === username);
+
         if (!user || !await bcrypt.compare(password, user.password)) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
+
         const token = jwt.sign({ username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
         res.json({ message: 'Login successful', token, user: { username: user.username, role: user.role } });
     } catch (error) {
