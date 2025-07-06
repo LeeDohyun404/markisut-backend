@@ -125,6 +125,15 @@ async function handleLogin(e) {
             throw new Error('Server tidak merespon dengan format JSON yang valid');
         }
         
+        // Handle 500 error specifically
+        if (response.status === 500) {
+            const errorText = await response.text();
+            console.log('500 Error response:', errorText);
+            
+            showToast('Server mengalami masalah. Silakan coba lagi dalam beberapa menit.', 'error');
+            return;
+        }
+        
         const data = await response.json();
         console.log('Response data:', data);
         
