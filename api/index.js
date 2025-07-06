@@ -1,23 +1,21 @@
-// File: api/index.js (Versi Final dengan Database Online)
+// File: api/index.js (Versi Final dengan Database Online & Semua Rute)
 
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const fetch = require('node-fetch'); // Perlu untuk komunikasi dengan database
+const fetch = require('node-fetch');
 
-// Inisialisasi aplikasi Express
 const app = express();
 
-// Konfigurasi dari Environment Variables Vercel
 const JWT_SECRET = process.env.JWT_SECRET;
-const JSONBASE_IO_KEY = process.env.JSONBASE_IO_KEY; // Kunci rahasia database kita
+const JSONBASE_IO_KEY = process.env.JSONBASE_IO_KEY;
 const DB_URL = `https://jsonbase.com/${JSONBASE_IO_KEY}`;
 
-// Konfigurasi CORS
 const allowedOrigins = [
-    'https://markisut-frontend.vercel.app'
+    'https://markisut-frontend.vercel.app',
+    'https://markisut-backend.vercel.app' // Ganti jika URL backend Vercel Anda berbeda
 ];
 const corsOptions = {
   origin: function (origin, callback) {
@@ -29,25 +27,19 @@ const corsOptions = {
   }
 };
 
-// Middleware
 app.use(cors(corsOptions));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 const publicPath = path.resolve(process.cwd(), 'public');
 app.use(express.static(publicPath));
 
-// Fungsi Bantuan untuk Baca/Tulis ke Database JSON
+// Fungsi Bantuan DB
 async function readDB(key) {
     try {
         const response = await fetch(`${DB_URL}/${key}`);
-        if (response.status === 404) return []; // Jika belum ada data, kembalikan array kosong
+        if (response.status === 404) return [];
         return response.json();
-    } catch (error) {
-        console.error(`Error reading from DB for key: ${key}`, error);
-        return [];
-    }
+    } catch (error) { return []; }
 }
-
 async function writeDB(key, data) {
     try {
         await fetch(`${DB_URL}/${key}`, {
@@ -56,36 +48,35 @@ async function writeDB(key, data) {
             body: JSON.stringify(data)
         });
         return true;
-    } catch (error) {
-        console.error(`Error writing to DB for key: ${key}`, error);
-        return false;
-    }
+    } catch (error) { return false; }
 }
-
-// Inisialisasi User Admin Jika Belum Ada
 async function initializeAdminUser() {
     const users = await readDB('users');
     if (users.length === 0) {
-        console.log("No admin user found, creating default admin...");
         const defaultAdmin = { username: 'admin', password: await bcrypt.hash('admin123', 10), role: 'admin' };
         await writeDB('users', [defaultAdmin]);
     }
 }
 
-// Middleware Autentikasi
 function authenticateToken(req, res, next) {
-    // ... (kode ini tetap sama)
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Access token required' });
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Invalid token' });
+        req.user = user;
+        next();
+    });
 }
 
 // ====== RUTE-RUTE APLIKASI ======
-
-app.get('/', (req, res) => {
-  res.send('<h1>Selamat Datang di Markisut Backend API v2</h1><p>Server berjalan dengan baik.</p>');
-});
+app.get('/', (req, res) => res.send('<h1>Markisut Backend API</h1><p>Server berjalan.</p>'));
+app.get('/api/health', (req, res) => res.json({ status: 'OK' }));
 
 app.post('/api/login', async (req, res) => {
     try {
-        await initializeAdminUser(); // Pastikan admin user ada
+        await initializeAdminUser();
+        if (!JWT_SECRET) throw new Error('JWT_SECRET not configured.');
         const { username, password } = req.body;
         const users = await readDB('users');
         const user = users.find(u => u.username === username);
@@ -95,6 +86,7 @@ app.post('/api/login', async (req, res) => {
         const token = jwt.sign({ username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
         res.json({ message: 'Login successful', token, user: { username: user.username, role: user.role } });
     } catch (error) {
+        console.error("Login Error:", error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -107,12 +99,12 @@ app.post('/api/orders', async (req, res) => {
         const newOrder = { id: orderId, ...orderData, createdAt: new Date().toISOString(), status: 'Pending', updatedAt: new Date().toISOString() };
         orders.push(newOrder);
         await writeDB('orders', orders);
-        res.status(201).json({ success: true, message: 'Order received successfully', order: newOrder });
+        res.status(201).json({ success: true, message: 'Order received', order: newOrder });
     } catch (error) {
         res.status(500).json({ error: 'Failed to create order' });
     }
 });
-// Rute untuk mendapatkan statistik dashboard
+
 app.get('/api/dashboard', authenticateToken, async (req, res) => {
     try {
         const orders = await readDB('orders');
@@ -129,22 +121,16 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
         };
         res.json(stats);
     } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
         res.status(500).json({ error: 'Failed to fetch dashboard stats' });
     }
 });
-// Rute untuk mendapatkan semua pesanan
+
 app.get('/api/orders', authenticateToken, async (req, res) => {
     try {
         const orders = await readDB('orders');
-        // Untuk saat ini kita kembalikan semua, tanpa filter & pagination
         const sortedOrders = orders.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-        res.json({
-            orders: sortedOrders,
-            total: sortedOrders.length
-        });
+        res.json({ orders: sortedOrders });
     } catch (error) {
-        console.error('Error fetching orders:', error);
         res.status(500).json({ error: 'Failed to fetch orders' });
     }
 });
@@ -153,5 +139,4 @@ app.get('/admin', (req, res) => {
     res.sendFile(path.join(publicPath, 'Admin-Panel.html'));
 });
 
-// Ekspor aplikasi Express untuk Vercel
 module.exports = app;
