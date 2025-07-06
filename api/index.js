@@ -112,6 +112,42 @@ app.post('/api/orders', async (req, res) => {
         res.status(500).json({ error: 'Failed to create order' });
     }
 });
+// Rute untuk mendapatkan statistik dashboard
+app.get('/api/dashboard', authenticateToken, async (req, res) => {
+    try {
+        const orders = await readDB('orders');
+        const stats = {
+            totalOrders: orders.length,
+            pendingOrders: orders.filter(o => o && o.status === 'Pending').length,
+            completedOrders: orders.filter(o => o && o.status === 'Completed').length,
+            totalRevenue: orders
+                .filter(o => o && o.status === 'Completed' && o.finalTotal)
+                .reduce((sum, order) => sum + (parseFloat(order.finalTotal) || 0), 0),
+            recentOrders: orders
+                .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+                .slice(0, 5)
+        };
+        res.json(stats);
+    } catch (error) {
+        console.error('Error fetching dashboard stats:', error);
+        res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+    }
+});
+// Rute untuk mendapatkan semua pesanan
+app.get('/api/orders', authenticateToken, async (req, res) => {
+    try {
+        const orders = await readDB('orders');
+        // Untuk saat ini kita kembalikan semua, tanpa filter & pagination
+        const sortedOrders = orders.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        res.json({
+            orders: sortedOrders,
+            total: sortedOrders.length
+        });
+    } catch (error) {
+        console.error('Error fetching orders:', error);
+        res.status(500).json({ error: 'Failed to fetch orders' });
+    }
+});
 
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(publicPath, 'Admin-Panel.html'));
